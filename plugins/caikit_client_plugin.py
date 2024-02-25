@@ -59,7 +59,7 @@ class CaikitClientPlugin(plugin.Plugin):
             logger.error("Interface %s not yet implemented", args["interface"])
 
     def request_grpc(self, query, user_id):
-        grpc_client = GrpcClient(self.host, self.port, verify=False)
+        grpc_client = GrpcClient(self.host, self.port, insecure=True)
 
         result = RequestResult(user_id, query.get("text"), query.get("input_tokens"))
 
