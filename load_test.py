@@ -5,6 +5,7 @@ import logging.handlers
 import multiprocessing as mp
 import sys
 import time
+from aux_utils.vllm_recorder import record_metrics_func
 from user import User
 
 from dataset import Dataset
@@ -94,6 +95,18 @@ def main(args):
     procs = []
     results_pipes = []
 
+    # Metrics Logging
+    metrics_conf = config.get("metrics_recorder")
+    metrics_save_dir = config["output"]["dir"] + "/metrics"
+    metrics_save_name = metrics_save_dir + "/" + config["output"]["file"][:-5] + "_metrics.json"
+    kill_sig = mp.Event()
+    record_proc = mp.Process(
+        target=record_metrics_func,
+        args=(config["plugin_options"]["endpoint"], True, kill_sig, None, metrics_conf["timeout"], metrics_conf["interval"], metrics_save_name)
+    )
+
+    record_proc.start()
+
     # Parse config
     logging.debug("Parsing YAML config file %s", args.config)
     concurrency, duration, plugin = 0, 0, None
@@ -103,8 +116,8 @@ def main(args):
         concurrency, duration, plugin, batch_size = utils.parse_config(config)
     except Exception as e:
         logging.error("Exiting due to invalid input: %s", repr(e))
+        kill_sig.set()
         exit_gracefully(procs, dataset_q, stop_q, logger_q, log_reader_thread, 1)
-
     try:
         logging.debug("Creating dataset with configuration %s", config["dataset"])
         # Get model_name if set for prompt formatting
@@ -128,8 +141,13 @@ def main(args):
             proc = mp_ctx.Process(target=user.run_user_process)
             procs.append(proc)
             logging.info("Starting %s", proc)
-            proc.start()
             results_pipes.append(recv_results)
+
+        # Attempt to start them closer to each other. With high concurrency numbers,
+        # it currently takes up to 10 seconds between the launch of the first and 
+        # the last user proc.
+        for proc in procs:
+            proc.start()
 
         logging.debug("Running main process")
         run_main_process(concurrency, duration, dataset, dataset_q, stop_q, batch_size)
@@ -142,13 +160,15 @@ def main(args):
     except KeyboardInterrupt:
         stop_q.cancel_join_thread()
         dataset_q.cancel_join_thread()
+        kill_sig.set()
         exit_gracefully(procs, dataset_q, stop_q, logger_q, log_reader_thread, 130)
     except Exception:
         logging.exception("Unexpected exception in main process")
+        kill_sig.set()
         exit_gracefully(procs, dataset_q, stop_q, logger_q, log_reader_thread, 1)
 
+    kill_sig.set()
     exit_gracefully(procs, dataset_q, stop_q, logger_q, log_reader_thread, 0)
-
 
 if __name__ == "__main__":
     main(sys.argv[1:])
