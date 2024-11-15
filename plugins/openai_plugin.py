@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from typing import Any, Optional, Union
+import os
 
 import requests
 import urllib3
@@ -241,7 +242,8 @@ class OpenAIPlugin(plugin.Plugin):
             return result
 
         logger.debug("Response: %s", json.dumps(response.text))
-
+        # if not os.path.exists("req_dump.json"):
+            # open("req_dump.json", "w").write(response.text)
         try:
             message = json.loads(response.text)
             error = message.get("error")
@@ -251,13 +253,13 @@ class OpenAIPlugin(plugin.Plugin):
                     raise IndexError("Returned number of sequences does not match the sequences sent")
                 
                 result.output_tokens = deepget(message, "usage", "completion_tokens")
+                result.output_text = [choice.get("text") for choice in deepget(message, "choices")]
                 result.input_tokens = deepget(message, "usage", "prompt_tokens")
                 # TODO: Raise issue on incorrect naming - OpenAI API returns both a finish reason and a stop reason. 
                 # stop_reason indicates a possible failure of the sequence. finish_reason could also indicate that we reached the requested length.
                 if isinstance(message.get("choices"), list):
                     result.stop_reason = [choice.get('finish_reason') for choice in message.get("choices")] 
                 else:
-                    result.end_time = time.time()
                     result.error_text = "Malformed reply"
                     logger.exception("Malformed reply")
                     if response is not None:

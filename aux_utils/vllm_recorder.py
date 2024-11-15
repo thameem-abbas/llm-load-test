@@ -6,6 +6,10 @@ import pandas
 import signal
 import logging
 
+# logging.basicConfig(filename="metrics_recorder.log", filemode="a",
+                    # format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                    # datefmt='%H:%M:%S',
+                    # level=logging.DEBUG)
 logger = logging.Logger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -27,14 +31,26 @@ def parse_metrics_response(raw_metrics_text : str, model_name : str):
 
     return metrics
 
-def record_metrics_func(base_endpoint=None, wait_until_ready=False, kill_signal : mpsync.Event =None, runtime=None, timeout=None, interval = 1, dump_path = "vllm_metrics.json"):
+def dump_to_csv(metrics_list, dump_name):
+    df = pandas.DataFrame(metrics_list)
+    cols = df.columns.to_list()
+    cols = cols[-1:] + cols[:-1]
+    df = df[cols]
+
+    if dump_name:
+        # Dump to csv/jsonl
+        df.to_csv(path_or_buf=dump_name)
+    else:
+        print(df.head())
+
+def record_metrics_func(base_endpoint=None, wait_until_ready=False, kill_signal : mpsync.Event =None, runtime=None, timeout=None, interval = 1, dump_path = "vllm_metrics.csv"):
     if not base_endpoint:
         raise ValueError("Endpoint invalid : " + base_endpoint)
     
     if kill_signal.is_set():
         raise RuntimeError("kill_signal must be unset at the time of starting metrics recording.")
     
-    if isinstance(kill_signal, mp.Event) and not runtime:
+    if isinstance(kill_signal, mpsync.Event) and not runtime:
         # Run for as long as kill_signal is not set. 
         runtime = float('inf')
 
@@ -72,13 +88,16 @@ def record_metrics_func(base_endpoint=None, wait_until_ready=False, kill_signal 
             current_timestamp = datetime.datetime.now()
             metrics_resp = requests.get(metrics_endpoint)
             metrics_dict = parse_metrics_response(metrics_resp.text, model_name=model_name)
-            metrics_resp["timestamp"] = current_timestamp.isoformat()
+            metrics_dict["timestamp"] = current_timestamp.isoformat()
             all_metrics.append(metrics_dict)
         except ConnectionError as e:
             # Unable to record - log it
             logging.error("Metrics check failed due to : " + str(e))
         except KeyboardInterrupt as ke:
             logger.info("Keyboard Interrup received. Exiting.")
+            
+    dump_to_csv(all_metrics, dump_path)
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
